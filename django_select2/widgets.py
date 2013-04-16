@@ -19,13 +19,34 @@ from . import __RENDER_SELECT2_STATICS as RENDER_SELECT2_STATICS
 logger = logging.getLogger(__name__)
 
 
-def get_select2_js_path():
+def get_select2_js_libs():
     from django.conf import settings
     if settings.configured and settings.DEBUG:
-        return 'js/select2.js'
+        return ('js/select2.js', )
     else:
-        return 'js/select2.min.js'
+        return ('js/select2.min.js', )
 
+def get_select2_heavy_js_libs():
+    libs = get_select2_js_libs()
+
+    from django.conf import settings
+    if settings.configured and settings.DEBUG:
+        return libs + ('js/heavy_data.js', )
+    else:
+        return libs + ('js/heavy_data.min.js', )
+
+def get_select2_css_libs(light=False):
+    from django.conf import settings
+    if settings.configured and settings.DEBUG:
+        if light:
+            return ('css/select2.css',)
+        else:
+            return ('css/select2.css', 'css/extra.css', )
+    else:
+        if light:
+            return ('css/select2.min.css',)
+        else:
+            return ('css/all.min.css', )
 
 ### Light mixin and widgets ###
 
@@ -56,8 +77,8 @@ class Select2Mixin(object):
         'closeOnSelect': False,
     }
     """
-    The options listed in this are rendered as JS map and passed to Select2 JS code.
-    The complete description of theses options are available in Select2_ JS' site.
+    The options listed here are rendered as JS map and passed to Select2 JS code.
+    Complete description of theses options are available in Select2_ JS' site.
 
     .. _Select2: http://ivaynberg.github.com/select2/#documentation.
     """
@@ -97,18 +118,17 @@ class Select2Mixin(object):
         """
         # Making an instance specific copy
         self.options = dict(self.options)
-        self.init_options()
         select2_options = kwargs.pop('select2_options', None)
         if select2_options:
-            for name in self.options:
-                val = self.options[name]
-                self.options[name] = select2_options.get(name, val)
+            for name, value in select2_options.items():
+                self.options[name] = value
+        self.init_options()
 
         super(Select2Mixin, self).__init__(**kwargs)
 
     def init_options(self):
         """
-        Sub-classes can use this to pass additional options to Select2 JS library.
+        Sub-classes can use this to suppress or override options passed to Select2 JS library.
 
         Example::
 
@@ -199,8 +219,8 @@ class Select2Mixin(object):
         return mark_safe(s)
 
     class Media:
-        js = (get_select2_js_path(), )
-        css = {'screen': ('css/select2.css', 'css/extra.css', )}
+        js = get_select2_js_libs()
+        css = {'screen': get_select2_css_libs(light=True)}
 
 
 class Select2Widget(Select2Mixin, forms.Select):
@@ -217,7 +237,11 @@ class Select2Widget(Select2Mixin, forms.Select):
         self.options.pop('multiple', None)
 
     def render_options(self, choices, selected_choices):
-        if not self.is_required:
+        all_choices = chain(self.choices, choices)
+        if not self.is_required and \
+            len([value for value, txt in all_choices if value == '']) == 0: # Checking if list already has empty choice
+                                                                            # as in the case of Model based Light fields.
+
             choices = list(choices)
             choices.append(('', '', ))  # Adding an empty choice
         return super(Select2Widget, self).render_options(choices, selected_choices)
@@ -332,10 +356,12 @@ class HeavySelect2Mixin(Select2Mixin):
 
                 3. Otherwise, check the cached results. When the user searches in the fields then all the returned
                 responses from server, which has the value and label mapping, are cached by ``heavy_data.js``.
+                
+        :type userGetValTextFuncName: :py:obj:`str`
 
-                4. If we still do not have the label then check the cookies. When user selects some value then
-                ``heavy_data.js`` stores the selected values and their labels in the cookies. These are cleared
-                when browser is closed.
+        .. tip:: Since version 3.2.0, cookies or localStorage are no longer checked or used. All
+            :py:class:`~.field.HeavyChoiceField` must override :py:meth:`~.fields.HeavyChoiceField.get_val_txt`.
+            If you are only using heavy widgets in your own fields then you should override :py:meth:`.render_texts`.
         """
         self.field = None
         self.options = dict(self.options)  # Making an instance specific copy
@@ -374,11 +400,16 @@ class HeavySelect2Mixin(Select2Mixin):
         selected_choices = list(force_unicode(v) for v in selected_choices)
         txts = []
         all_choices = choices if choices else []
+        choices_dict = dict()
         for val, txt in chain(self.choices, all_choices):
             val = force_unicode(val)
-            if val in selected_choices:
-                selected_choices = [v for v in selected_choices if v != val]
-                txts.append(txt)
+            choices_dict[val] = txt
+        for val in selected_choices:
+            try:
+                txts.append(choices_dict[val])
+            except KeyError:
+                logger.error("Value '%s' is not a valid choice.", val)
+
         if hasattr(self.field, '_get_val_txt') and selected_choices:
             for val in selected_choices:
                 txt = self.field._get_val_txt(val)
@@ -432,8 +463,8 @@ class HeavySelect2Mixin(Select2Mixin):
         return js
 
     class Media:
-        js = (get_select2_js_path(), 'js/heavy_data.js', )
-        css = {'screen': ('css/select2.css', 'css/extra.css', )}
+        js = get_select2_heavy_js_libs()
+        css = {'screen': get_select2_css_libs()}
 
 
 class HeavySelect2Widget(HeavySelect2Mixin, forms.TextInput):
