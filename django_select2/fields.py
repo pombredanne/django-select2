@@ -158,6 +158,19 @@ class ModelResultJsonMixin(object):
         """
         return smart_unicode(obj)
 
+    def extra_data_from_instance(self, obj):
+        """
+        Sub-classes should override this to generate extra data for values. These are passed to
+        Javascript and can be used for custom rendering.
+
+        :param obj: The model object.
+        :type obj: :py:class:`django.model.Model`
+
+        :return: The extra data dictionary.
+        :rtype: :py:obj:`dict`
+        """
+        return {}
+
     def prepare_qs_params(self, request, search_term, search_fields):
         """
         Prepares queryset parameter to use for searching.
@@ -246,7 +259,8 @@ class ModelResultJsonMixin(object):
             res = list(qs.filter(*params['or'], **params['and']))
             has_more = False
 
-        res = [(getattr(obj, self.to_field_name), self.label_from_instance(obj), ) for obj in res]
+        res = [(getattr(obj, self.to_field_name), self.label_from_instance(obj), self.extra_data_from_instance(obj))
+                for obj in res]
         return (NO_ERR_RESP, has_more, res, )
 
 
@@ -332,8 +346,11 @@ class ModelChoiceFieldMixin(object):
 
     def __init__(self, *args, **kwargs):
         queryset = kwargs.pop('queryset', None)
+        # This filters out kwargs not supported by Field but are still passed as it is required
+        # by other codes. If new args are added to Field then make sure they are added here too.
         kargs = extract_some_key_val(kwargs, [
             'empty_label', 'cache_choices', 'required', 'label', 'initial', 'help_text',
+            'validators', 'localize',
             ])
         kargs['widget'] = kwargs.pop('widget', getattr(self, 'widget', None))
         kargs['to_field_name'] = kwargs.pop('to_field_name', 'pk')
